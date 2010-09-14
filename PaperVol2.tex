@@ -1,0 +1,712 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%% author.tex %%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% sample root file for your contribution to a "contributed book"
+%
+% "contributed book"
+%
+% Use this file as a template for your own input.
+%
+%%%%%%%%%%%%%%%%%%%%%%%% Springer-Verlag %%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\documentclass{svmult}
+
+\usepackage{makeidx}
+\usepackage{graphicx}
+\usepackage{multicol}
+\usepackage[bottom]{footmisc}
+
+\usepackage{amsmath}
+\usepackage{eso-pic}
+\usepackage{float}
+\usepackage{amssymb}
+
+\usepackage{textcomp}
+\newtheorem{prop}[theorem]{Lemma}
+
+\makeindex
+\title*{On Hessian- and Jacobian-free SQP methods - a total quasi-Newton scheme with compact storage}
+\titlerunning{Zed is dead}
+\author{Torsten Bosse \inst{1},Volker Schlo\ss hauer \inst{2} and Andreas Griewank\inst{3}}
+\institute{\footnote{Supported by the DFG Research Center {\sc{matheon}} \textacutedbl Mathematics for Key technologies\textacutedbl , Stra\ss e des 17. Juni 136, 
+				10623 Berlin, Germany, \texttt{www.matheon.de}} 
+	Humboldt Univerit\"at zu Berlin, Institut f\"ur Mathematik, Unter den Linden 6, 10099  Berlin, Germany, \texttt{bosse@math.hu-berlin.de}
+\and \footnotemark[\value{footnote}] Weierstra\ss -Institut f\"ur Angewandte Analysis und Stochastik, Mohrenstr. 39, 10117  Berlin, Germany, \texttt{schlosshauer@wias-berlin.de}
+\and \footnotemark[\value{footnote}] Humboldt Univerit\"at zu Berlin, Institut f\"ur Mathematik, Unter den Linden 6, 10099  Berlin, Germany, \texttt{griewank@math.hu-berlin.de}}
+
+% \index{ NLP; Total quasi-Newton method; Limited memory; Symmetric rank-one update; Compact representation; ZED is DEAD; Algorithmic differentiation; Compact representation with damping }
+
+
+
+\begin{document}
+
+\maketitle
+\section*{Abstract}
+\begin{scriptsize}
+\textit{Keywords:} NLP; Total quasi-Newton method; Limited memory; Symmetric rank-one update;\\ 
+		\hspace*{1.3cm}	 Compact representation (with damping); ZED is DEAD; Algorithmic differentiation 
+\end{scriptsize} \\
+
+
+\noindent In this paper we describe several modifications of the total quasi-Newton method proposed in \cite{tb:ANDREAS} to reduce the memory requirement drastically.\\
+The basic formulae for limited memory versions of the BFGS and symmetric rank-one update were given in \cite{tb:NOCEDAL}. The use in SNOPT was reported in \cite{tb:GILL}.
+It was shown in \cite{tb:VOLKER} how this idea can be extended to the total quasi-Newton approach using an updated nullspace factorization for the KKT system.\\
+\noindent A brief introduction to the limited memory approach for a total quasi-Newton method based on Automatic Differentiation (cf. \cite{tb:AD})\index{Algorithmic differentiation} is described in the present paper.
+Also an effective way for the implementation of the nullspace factorization is given in which the nullspace representation is not stored directly.
+Thus, it can be proved (cf. \cite{tb:TORSTEN}) that the number of operations per iteration is bounded by a bi-linear order $\mathcal{O} (n\cdot\max(m,l))$ instead of the cubic order $\mathcal{O} (m\cdot n^2)$ for standart SQP methods. Here, $n$ is the number of variables, $m$ the maximal number of active constraints and $l$ the user selected number of stored update vectors.\\
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Introduction}
+\label{tb:intro}
+The main goal of this work is to sketch an efficient approach to solve \textit{nonlinear programs} \index{NLP} of the form:
+\begin{eqnarray*}
+			&\left.	\begin{array}{c} \underset{x\in \mathbb{R}^n}{\min} f(x) \\ \mbox{s.t. }\; c_{\mathcal{I}}(x) \leq 0\\ \quad \quad c_{\mathcal{E}}(x) = 0
+								\end{array}	\quad \right\} & \hfill \mathrm{NLP}.
+\end{eqnarray*}
+
+\noindent Here $c_{\mathcal{I}}=(c_i)_{i\in\mathcal{I}}$ and $c_{\mathcal{E}}=(c_i)_{i\in\mathcal{E}}$ denote the mappings of \textit{inequality constraint} functions $c_i:\mathbb{R}^n\rightarrow \mathbb{R},i \in \mathcal{I}$ and \textit{equality constraint} functions $c_i:\mathbb{R}^n\rightarrow \mathbb{R}$, $i \in \mathcal{E}$, where $f$ and $c_i$, $i \in \mathcal{I} \cup\mathcal{E}$, are at least $C^2$ functions. Also the existence of a local solution $x^* \in \mathbb{R}^n$ where LICQ holds is assumed.\\
+
+\noindent An active-set strategy can be used to numerically determine the active constraints $\mathcal{A}(x^*) \subseteq \mathcal{I} \cup \mathcal{E}$ in $x^*$. Assume $\mathcal{A}(x)$ is known, and denote by $c_{\mathcal{A}}:\mathbb{R}^n\rightarrow \mathbb{R}^m$ the corresponding restriction mapping for $x \in \mathbb{R}^n$. Then solving the NLP is equivalent to finding a solution of the \textit{reduced equality constraint problem}:
+\begin{eqnarray*}
+	&\left.\begin{array}{c}
+		 \underset{x\in \mathbb{R}^n}{\min} f(x) \\ \mbox{s.t. }c_{\mathcal{A}}(x) = 0
+	\end{array}	\quad \right\} & \hfill \mathrm{(R-ECP)}.
+\end{eqnarray*}
+
+\noindent The \textit{Lagrangian} 
+\begin{equation*}
+	\mathcal{L}(x,\lambda)=f(x)+\underset{i\in \mathcal{A}}{\sum}\lambda_ic_i(x)
+\end{equation*}
+
+\noindent  associated with the reduced equality constrained problem appears in a first-order optimality condition for stationary points $(x^*,\lambda^*)$:
+\begin{equation}
+\label{tb:stat}
+	\nabla_{x,\lambda_{\mathcal{A}}} \mathcal{L}(x^*,\lambda^*)=0.	
+\end{equation}
+
+\noindent According to \cite{tb:ANDREAS} a total quasi-Newton method \index{Total quasi-Newton method} can be applied to determine $(x^*,\lambda^*)$. In such a method both the reduced Hessian $Z^\top \nabla^2_{xx} \mathcal{L}(x,\lambda) Z$ and the Jacobian $c^\prime_{\mathcal{A}}(x)$ are approximated by some matrices $Z^\top B Z$ and $A$, respectively, which  are updated by use of low-rank update formulae. \\
+
+\noindent Applying the null-space method to (\ref{tb:stat}) one recovers the KKT system
+\begin{equation*}
+	\left( \begin{array}{c c c} Y^{\top}BY & Y^{\top}BZ &L^{\top}\\
+		Z^{\top}BY & Z^{\top}BZ &0\\
+	L&0&0 \end{array}\right)
+	\left( \begin{array}{c} Y^{\top}s \\ Z^{\top}s \\ \sigma \end{array}\right)
+	= - \left( \begin{array}{c} Y^{\top}\nabla_x \mathcal{L}(x,\lambda) \\ Z^{\top}\nabla_x \mathcal{L}(x,\lambda) \\c_{\mathcal{A}}(x)\end{array}\right) .
+\end{equation*}
+
+\noindent An \textit{extended QR factorization} of $A=[L,0][Y, Z]^{\top}$ is necessary for its solution where  $Z \in \mathbb{R}^n\times \mathbb{R}^d$ with $d=n-m$ contains any null space basis of $A$.  The vector on the right-hand side can efficiently be computed by use of Algorithmic Differentiation techniques (cf. \cite{tb:AD}).
+The approximate \textit{projected Hessian} $Z^{\top}BZ$ is kept positive definite, since the exact one will have this property near local minima where second-order sufficiency conditions hold.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{A Limited-Memory Approach for the SR1 Method}
+
+Several important concepts of limited-memory updating of KKT matrices are introduced for large-scale optimisation. 
+There exist a couple of iterative techniques, also a recursive formula for the
+BFGS update \cite{NW}, and useful algebraic equations
+describing the simultaneous application of quasi-Newton updates on a (initial) projected Hessian approximation. 
+In this context the compact representation
+formula of the SR1 update, first described in \cite{tb:NOCEDAL}, is presented and its use reported in the framework of 
+a limited-memory method. \\
+%The storage complexity for the projected Hessian is reduced to bilinear order. 
+
+\noindent These compact representation formulae offer a number of advantages over the full-storage implementation of the reduced Hessian. First and foremost the space for storing $B$ is reduced to a number $l$ of update vectors, whereas the initial matrix can be chosen in an economical manner like $B_0= \gamma I$. Here  $\gamma \in \mathbb{R}$ ideally represents the average eigenvalue of $B$. The choice of $\gamma$ can be corrected in every step which is a main benefit of the method and has a larger impact on the convergence rate of the algorithm, see \cite{tb:VOLKER}. \\
+
+\noindent Though we focus on the SR1 update, which still seems  well-suited for many numerical applications, an extension of the numerical theory 
+to other update formulae, e.g. the BFGS update, is conceivable.
+
+\subsection{Compact Representation Formula with Damping Factors}
+\index{ Limited memory} \index{Symmetric rank-one update}
+\noindent Consider a number $l$ of damped SR1 updates applied consecutively to the (initial) symmetric Hessian matrix $B_0 \in \mathbb{R}^{n \times n}$. As a result one obtains the (current) Hessian matrix $B_l \in \mathbb{R}^{n \times n}$ by applying
+\begin{equation}
+\label{SR1-update}
+	B_{i+1}=B_{i}+\beta_i \frac{(w_i-B_i s_i)(w_i -B_i s_i)^{\top}}{(w_i-B_i s_i)^{\top}s_i} \quad , i \in \{ 0, \ldots , l-1 \} .
+\end{equation}
+Here $\beta_i \in ]0,1]$ is a damping parameter and $(w_i-B_i s_i)^{\top}s_i \neq 0$ is assumed. One introduces $\epsilon_i := {(w_i-B_i s_i)^{\top}s_i}\in R$ for convenience.
+
+ \noindent In order to avoid the fill-in due to the addition of low-rank terms, one may prefer to store a tuple $(s_i, w_i, \beta_i)\in \mathbb{R}^{n} \times \mathbb{R}^{n} \times \mathbb{R}$ for each update, where $s_i=x_{i+1}-x_i$ and $w_i=\nabla_x \mathcal L(x_{i+1},\lambda_i)-\nabla_x \mathcal L(x_i,\lambda_i)$ contain all information to recover the secant condition \[w_i=B_{i+1} s_i.\]
+
+\noindent In the following a sequence of SR1 updates identified with $(s_j,w_j,\beta_j)$, $j\in \{0,\dots, l-1\}$ is applied to $B_0$ using a compact representation formula, which is well-known for many quasi-Newton updates and here adapted to the need of damping the SR1 update in case of indefinite approximations $B$. The update vectors and scalar products are arranged in matrices
+%
+\begin{align*}
+ 	&S_l = 
+ 			\begin{pmatrix}
+ 				s_{0} &   \cdots   & s_{l-1}
+ 			\end{pmatrix}\in \mathbb{R}^{n\times l}, \quad
+ 	W_l =
+			\begin{pmatrix}
+ 				w_{0} & \cdots  & w_{l-1}
+ 			\end{pmatrix}\in \mathbb{R}^{n\times l} ,\\
+	&Q_l  \in \mathbb{R}^{l \times l} \quad \mbox{ s.t. } \quad e_i^\top Q_l e_h = e_h^\top Q_l e_i=w^{\top}_{i-1}s_{h-1} (i\geq h),\\
+	&P_l  \in \mathbb{R}^{l \times l} \quad \mbox{ s.t. } \quad e_i ^\top P_l e_h= e_h^\top P_l e_i=s^{\top}_{i-1}w_{h-1} (i\geq h).
+	%\beta&=(\beta_{0},\beta_{1},\dots, \beta_{l-1})  \in \mathbb{R}^l 
+\end{align*}
+
+\begin{theorem}[Compact representation with damping]\index{Compact representation with damping}\\
+	Denote with $l$ the number of damped symmetric rank-one update pairs $(s_j,w_j,\beta_j)_{j=0}^{l-1}$ applied to the initial matrix $B_0$ and 
+	assume
+	\begin{align}
+		\label{tb:sr1stab}
+		(w_j -B_j s_j)^{\top}s_j\neq 0 \mbox{ and } \beta_j \neq 0 \quad \forall j \in \{0,\dots,l-1\}
+	\end{align} 
+	Then the matrix $M_l:=P_l - D_l - S_l^\top B_0 S_l\in \mathbb{R}^{l \times l}$ is invertible and it holds that
+	\begin{equation*}
+	%\label{representation}
+		 B_l=B_0 +(W_l- B_0 S_l)M^{-1}_l (W_l-B_0 S_l)^{\top}
+	\end{equation*}
+	where the diagonal matrix $D_l=\mathrm{diag}(D_{jj})_{j=0}^{l-1}$ is given by
+	\begin{equation*}
+		 D_{jj}:=(1-\beta^{-1}_j)(w_j -B_j s_j)^{\top}s_j
+	\end{equation*}
+\end{theorem}
+\begin{proof}
+	At first one verifies the validity of the compact representation formula for $l=1$:
+\begin{align}
+\label{comprepr_proof1}
+	M_1 =s_0 ^\top w_0 - \epsilon_0 (1 - \beta^{-1}_0) - s_0^\top B_0 s_0 = \frac{\epsilon_0}{\beta_0} \neq 0
+\end{align}
+In the inductive steps one drops the index $j$ and writes $s$ and $s_+$ instead of $s_j$ and $s_{j+1}$ etc.. One
+assumes that the compact representation formula holds true for some $i \in \{0, \cdots, l-1 \}$ and defines
+%
+\[
+	u = w - B_0 s \;, \quad
+	U = W - B_0 S \;, \quad
+	v = U^\top s \; .
+\]
+%
+Due to the compact representation of $B$ one follows
+%
+\begin{align*}
+B_+ & = B_0 +  U M ^{-1} U^\top + \beta \frac{(w - B_0 s - U M^{-1}U^\top s )( w - B_0 s - U M^{-1}U^\top s ) ^\top }{(w - B_0 s)^\top s - s^\top U M^{-1} U^\top s }\\
+& = B_0 +  U M ^{-1} U^\top + \beta \frac{(u - U M^{-1} v )( u - U M^{-1} v ) ^\top }{u^\top s - v^\top M^{-1} v } \\
+&= B_0 + \frac{\beta}{\epsilon} \Big( u u^\top - u v^\top M^{-1} U^\top - U M^{-1} v u^\top + U ( \frac{\epsilon}{\beta} M^{-1} + M^{-1} v v^\top M^{-1} ) U^\top \Big) \\
+	&= B_0 + \frac{\beta}{\epsilon} 
+	\begin{pmatrix}
+		U & u
+	\end{pmatrix}
+	\begin{pmatrix}
+		M^{-1}( \beta^{-1} \epsilon I + v v^\top M^{-1} ) & -M^{-1} v \\
+		-v^\top M^{-1} &	1 
+	\end{pmatrix}
+	\begin{pmatrix}
+		U^\top \\
+		u^\top
+	\end{pmatrix}
+\end{align*}
+%
+Then the matrix $M_+$ is given due to the following equation
+\begin{align}
+\label{de-Minv}
+		\begin{pmatrix}
+			M & v \\
+			v^\top & u^\top s - \epsilon + \dfrac{\epsilon}{\beta}
+		\end{pmatrix}
+		\begin{pmatrix}
+			M^{-1}\left( \dfrac{\epsilon}{\beta} I + v v^\top M^{-1} \right)	&	-M^{-1} v \\
+			-v^\top M^{-1}	&	1
+		\end{pmatrix} =  \dfrac{\epsilon}{\beta} I_+ 
+\end{align}
+given the regularity of $M$ and the regularity condition
+%
+\begin{align}
+\label{de-epsequ}
+\epsilon = w^\top s - s^\top B s = u^\top s - v^\top M^{-1} v \neq 0 .
+\end{align}
+This shows the regularity of $M_+$ and concludes the proof.%
+
+\end{proof}
+
+A similiar formula for the inverse $B^{-1}$ can be derived by interchanging the position of $S$ and $W$. \\
+
+\noindent Of course, the formula \ref{SR1-update} is not used numerically to compute $B$ explicitly but to apply the right-hand side to a given vector or mapping etc. The bound $\mathcal{O}(l\cdot n) + \mathcal{O}(l^2)$ holds for multiplying vectors by $B$ or its inverse $B^{-1}$, whereas the storage of a new update vector pair takes $\mathcal{O}(l\cdot n) + \mathcal{O}(l^3)$ operations including the refactorization of $M$. If $l \ll n$ is small, the factorization effort stays negligible. \\
+
+One of the major drawbacks of SR1 lies in the numerical instability of the update due to cancelation in the denominator.
+Skipping the update leads to a numerically stable algorithm and is achieved 
+by removing the corresponding update vectors in $S$ and $W$ and the same column and row in $M$ with negligible computational effort. \\
+
+\noindent The validation of the stability conditions $\epsilon_j \neq 0$ can be, however, rather expensive given the fact that the computation of a simple B-vector product takes $\mathcal O (j \cdot n)$ operations. The following proposition allows the detection of numerical instabilities in a more practical way.
+
+
+\begin{prop}
+Let $B_0$ be symmetric and ($s_i$, $w_i$, $\beta_i$), $\beta_i \neq 0$ (i = { 0, \ldots, l - 1}) be a series of SR1 update vectors as in (\ref{SR1-update}). The SR1 regularity conditions
+$(w_j - B_j s_j)^\top s_j \neq 0$ are fulfilled, iff. all principal minors $M_j$ of $M$ (j=1,\ldots,l)
+% which are derived from $M$ by removing the last $l-j$ columns and rows, 
+are invertible.
+\end{prop}
+\begin{proof}
+One direction, namely the nonsingularity of the matrices $M_j$, has been shown already in the proof of the last theorem. 
+Now assume that $M_j$ is invertible for all $j \in \{1, \ldots, l \}$. The conclusion
+that $\epsilon_0 \neq 0$ follows directly from (\ref{comprepr_proof1}). Let $j \neq 1$ be arbritrary, so one can define $\tilde{v}_j=\begin{pmatrix} M_{j-1}^{-1} v_j & -1 \end{pmatrix}^\top $ and it holds
+\begin{align}
+M_j \tilde{v}_j = \begin{pmatrix}
+	M_{j-1} & v_j \\
+	v_j^\top & u_j^\top s_j + (1 - \beta^{-1})\epsilon
+	\end{pmatrix} \begin{pmatrix}
+	M_{j-1}^{-1} v_j \\
+	-1
+	\end{pmatrix}  =
+	\begin{pmatrix}
+	0 \\
+	\beta^{-1} \epsilon
+	\end{pmatrix} .
+\end{align}
+Given that $M_j$ is invertible and $\beta_j \neq 0$ it follows that $\epsilon_j \neq 0$ holds true.
+\end{proof}
+
+\noindent The validation of the stability conditions can be simplified by using an LU factorization for $M$ without pivoting. 
+The algorithm computes successively the LU factors for the principal minors and fails, if $M_j$ is singular.\\
+
+
+
+\subsection{Limited-Memory Updating}
+
+
+In a limited-memory approach the number $l$ of updates is usually bounded in the iteration process to some constant $\hat{l}$. 
+A common technique is to use the local curvature information in the last $\hat{l}$ steps and to store the corresponding update vectors in $S$ and $W$. 
+One may choose the scaled identity as initial guess $B_0$ for the Hessian as follows
+\begin{align*}
+S = 
+ 			\begin{pmatrix}
+ 				s_{k-l+1} &   \cdots   & s_{k}
+ 			\end{pmatrix}&, 
+ 	\quad W =
+			\begin{pmatrix}
+ 				w_{k-l+1} & \cdots  & w_{k}
+ 			\end{pmatrix}\\
+	B_0^{(k)} = \gamma_k I &, \quad \gamma_k = \frac{s_{k-1}^\top w_{k-1}}{ \left| s_{k-1} \right| }
+\end{align*}
+Here $\gamma=\gamma_k$ is adapted individually in the $k$-th step. So the compact representation formula for $B$ and $B^{-1}$ now read
+\begin{align*}
+B &= \gamma I + (W - \gamma S)( P - \gamma S^\top S )^{-1}(W- \gamma S)^\top\\
+B^{-1} &= \gamma^{-1} I + (S - \gamma^{-1} W)( \tilde{P} - \gamma^{-1} W^\top W )^{-1}(S- \gamma^{-1} W)^\top.
+\end{align*}
+ 
+The symmetric matrix $\tilde{P}=S^\top W + W^\top S - P$ contains the upper triangular matrix of $S^\top W$. In the limited-memory method usually the oldest update vector pair in $S$ and $W$ is replaced if $k>\hat{l}$. Furthermore, the scalar products in $M$ involving $s_k$ and $w_k$ have to be recomputed. \\
+
+\noindent Numerically it seems convenient to store the matrices $W$, $S$, $P$, $S^\top S$ and $\tilde{P}$ and $W ^\top W$ separately and update them in every step which allows retrospectively the adjustment of the scaling factor $\gamma$.\\
+
+\noindent In order to evaluate the Hessian at a given direction $v \in \mathbb{R}^n$, one needs to compute an outer matrix product including a factorization of the matrix $M$. 
+%
+\begin{align*}
+Bv &= \gamma v + (W - \gamma S)\big( ( P - \gamma S^\top S )^{-1}[ (W- \gamma S)^\top v ] \big)
+\end{align*}
+%
+Here the factorization effort stays negligible due to the economical choice of $\hat{l}$, say $l \leq 30$. The overall effort for computing matrix-vector products with $B$ then amounts to $\sim 4 ln + \mathcal O (l^2)$ operations, if one additionally decides to store and update the matrix $U=W- \gamma S$. That is, the limited-memory method is also less time-consuming in both the step direction computation and the matrix update of the KKT system.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\subsection{Constrained Optimization and Limited Memory}
+\noindent Consider again the nullspace factorized KKT system of the equality constrained problem  for computing a total quasi-Newton step  
+\begin{equation*}
+	\left( \begin{array}{c c c} Y^{\top}BY & Y^{\top}BZ &L^{\top}\\
+					Z^{\top}BY & Z^{\top}BZ &0\\
+				L&0&0 \end{array}\right)
+		\left( \begin{array}{c} Y^{\top}s \\ Z^{\top}s \\ \sigma \end{array}\right)
+		= - \left( \begin{array}{c} Y^{\top}\nabla_x L(x,\lambda) \\ Z^{\top}\nabla_x L(x,\lambda) \\c_{\mathcal{A}}(x) \end{array}\right)
+\end{equation*}
+
+\noindent Then the limited memory approach can be incorporated easily by replacing $B$ with the compact representation formula.
+Hence, instead of storing the factors $Y^{\top}BY$, $Z^{\top}BY$ and $Z^{\top}BZ$ it is sufficient to only store and update the matrices $W$, $S$ and two smaller matrices in $\mathbb{R}^{l\times l}$. In addition the necessary matrix-vector products can be calculated directly by multiplication from right to left using the reformulation and the orthogonality of $Y$ and $Z$
+\begin{eqnarray*}
+		Y^{\top}BY&=&\gamma I +(Y^{\top}W-\gamma Y^{\top}S)\bar{M}^{-1}(Y^{\top}W-\gamma Y^{\top}S)^{\top}\\
+		Y^{\top}BZ&=&(Y^{\top}W-\gamma Y^{\top}S)\bar{M}^{-1}(Z^{\top}W-\gamma Z^{\top}S)^{\top}\\
+		Z^{\top}BZ&=&\gamma I +(Z^{\top}W-\gamma Z^{\top}S)\bar{M}^{-1}(Z^{\top}W-\gamma Z^{\top}S)^{\top}\\
+		(Z^{\top}BZ)^{-1}&=&\gamma^{-1} I +\gamma^{-2}(Z^{\top}W-\gamma Z^{\top}S) \bar{N}^{-1}(Z^{\top}W-\gamma Z^{\top}S)^{\top}  
+\end{eqnarray*}
+
+\noindent where the middle matrices $\bar{M}$, $\bar{N} \in \mathbb{R}^{l\times l}$ are now defined as follows
+\begin{eqnarray*}
+		\bar{M}:=M=P-D-\gamma S^{\top}S & \mbox{and} & \bar{N}:=-\bar{M} -\gamma^{-1} (W-\gamma S)^{\top}ZZ^{\top}(W-\gamma S)
+\end{eqnarray*}
+
+\noindent Unlike the BFGS update the SR1 update does not necessarily preserve the property of positive definiteness for $Z^\top B Z$ which implies together with nonsingularity of the Jacobian the solvability of the KKT system. A remedy is proposed for the unconstrained limited memory approach in \cite{tb:VOLKER}. It consists of using the damping parameters $\beta_i$ for the updates $(s_i,w_i)$  and adapting the scaling parameter $\gamma$.
+In the next section, this idea will be discussed in detail and extended to the constrained case.\\
+
+\noindent A major concern is also to handle the matrices $Y$ and $Z$ of the extended QR-factorization, which also need to be stored. Consequently, one still needs at least $\mathcal{O}(n^2)$ storage to save the nullspace factorization, even for unconstrained problems. A remedy that omit this drawback is shown in the Section 'ZED is DEAD'.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\subsection{Maintaining the Positive Definiteness of the Projected Hessian}
+
+\underline{\textbf{TODO:}} \\
+Basic ideas:
+\begin{itemize}
+	\item Extend Lehmann's Criteria for the constrained case, i.e., apply it on the projected Hessian. (Done)
+	\item Therefore, keep $\bar{Q}$ positive definite by damping if the Hessian is updated (Proof is analogous to the old one, works fine, need to write it done!)
+	\item Note that $\bar{Q}$ includes now the terms $S^{\top}YY^{\top}W$ and $W^{\top}YY^{\top}S$.
+		$\Rightarrow$ A Jacobian update(/constraint de-/activation) can cause a loss of pos.def. of $\bar{Q}$ and, thus, also for $Z^{\top}BZ$.
+		 Apply a slightly changed determinant ratio lemma for Jacobi changes to check this.
+	\item Instead of manipulating now the damping parameters of the Hessian update (given by $D$),
+		apply a preaugmentation as in the dense case to avoid singularity or negative definiteness ...( should be clear )
+	\item Then say sth. about the adjustment of gamma... ( the old stuff or any other idea - if s.o. has a really good one )
+\end{itemize}
+ 
+\clearpage
+\begin{lemma}[Lehmann's criterion]
+\label{tb:LEHMANN}
+	Let $B_0 \in \mathbb{R}^{n \times n}$ and $W, S \in \mathbb{R}^{n \times l}$ and the matrices $M$, $N$, $P$, $Q \in \mathbb{R}^{l \times l}$, $B \in \mathbb{R}^{n \times n}$ as defined above. The projected Hessian $Z^{\top}BZ$ is positive definite, if and only if the inertiae of $M$ and $N$ coincide.
+\end{lemma}
+\begin{proof}
+The statement is a direct implication of Sylvester's law of inertia applied to the symmetric matrices $T_1$, $T_2=V_2^{\top}T_1V_2$ and $T_3=V_3^{\top}T_1V_3$ given by
+\begin{align*}
+	T_1 &= \begin{pmatrix}
+		\gamma I & U \\
+		U^\top & -\bar{M}
+	\end{pmatrix} \quad \mbox{with} \quad U = Z^{\top} W - \gamma Z^{\top} S\\
+	T_2 &= \begin{pmatrix}
+		I	& U\bar{M}^{-1}\\
+		0 &	I
+	\end{pmatrix}
+	\begin{pmatrix}
+		\gamma I & U \\
+		U^\top & -\bar{M}
+	\end{pmatrix}
+	\begin{pmatrix}
+		I	& 0 \\
+		\bar{M}^{-1}U^\top &	I
+	\end{pmatrix} = 
+	\begin{pmatrix}
+		Z^{\top}BZ & 0 \\
+		0 &	-\bar{M}
+	\end{pmatrix},\\
+%
+	T_3 &= \begin{pmatrix}
+		I	& 0\\
+		-\gamma^{-1}U^\top &	I
+	\end{pmatrix}
+	\begin{pmatrix}
+		\gamma I & U \\
+		U^\top & -\bar{M}
+	\end{pmatrix}
+	\begin{pmatrix}
+		I	& -\gamma^{-1}U \\
+		0 &	I
+	\end{pmatrix} = 
+	\begin{pmatrix}
+		\gamma I & 0 \\
+		0 &	-\bar{M} - \gamma^{-1}U^\top U
+	\end{pmatrix} .
+\end{align*}
+Obviously, $V_1$ and $V_2$ are invertible matrices and the inertiae of $T_1$, $T_2$ and $T_3$ all coincide. The spectra of $T_2$ and $T_3$ can be analyzed by investigating the submatrices $Z^{\top}BZ$, $-\bar{M}$, and $\gamma I$, $-\bar{M} -\gamma^{-1} U^{\top}U$.
+So, by comparing eigenvalues one can deduce that $Z^{\top}BZ$ is positive definite, if and only if $-\bar{M}$ and $\bar{N}=-\bar{M}-\gamma^{-1}U^{\top}U$ possess the same number of positive and negative eigenvalues.
+\end{proof}
+
+\begin{corollary}
+\label{tb:LEHMANN}
+	Consider the projected Hessian $Z^{\top}BZ$ as defined in the previous theorem. If the matrix $Q$ given by
+\begin{equation*}
+	Q:= -P+D+ W^{\top}S + S^{\top}W
+\end{equation*}
+ is positive definite, then there exists $\Gamma >0$ such that $Z^{\top}BZ$ becomes positive definite for all $\gamma >\Gamma$.
+\end{corollary}
+
+\begin{proof}
+A straightforward calculation for midterm $\bar{N}$ of $Z^{\top}B^{-1}Z$ yields
+\begin{align*}
+	\bar{N}=-M-\gamma^{-1}U^\top U = Q - \gamma^{-1} W^\top W + \gamma^{-1}(W -\gamma S )^{\top}YY^{\top}(W -\gamma S )
+\end{align*}
+where the orthogonal decomposition $I=ZZ^{\top}+YY^{\top}$ is used.
+Under the assumption that $Q$ is positive definite it follows that there exists $\Gamma >0$ such that $\bar{N}$ becomes positive definite as well as $T_3$ and, therefore, also $Z^{\top}BZ$.
+\end{proof}
+
+
+\noindent The positive definiteness of $Q$ can be still guaranteed as described in \cite{tb:VOLKER}:
+\clearpage
+\begin{lemma}[Determinant ratio for damping parameters]\\
+	Let $(s_i,w_i,\beta_i)_{i=0,\dots,l-1}$ be a sequence of $l$ SR1 updates and $(s_+,w_+,\beta_+)$ be
+	a SR1-update replacing $(s_h, w_h,\beta_h)$, $h \in \{0, \ldots,l-1 \}$. Define the determinant ratio $q:\mathbb{R}\rightarrow \mathbb{R}$ as
+	\begin{equation*}
+		 q(\beta_+)=\frac{\det \bar{Q}_+}{\det \bar{Q}}.
+	\end{equation*}
+	Then, it holds
+	\begin{equation*}
+		q(\beta_+)=b_h\beta_++c_h^2 +2c_h -b_hc^{\top}d +1
+	\end{equation*}
+	where $b=\bar{Q}^{-1}e_h$, $c=\bar{Q}^{-1}d$ and the vector 
+ 	\begin{equation*}
+		(d_j)_{j=0}^{l-1}=\left\{ \begin{array}{cc}
+			s_j^{\top}w_+-\bar{Q}_{ij} & \mbox{ if } (j\neq i)\\
+			\frac{1}{2}(s_+^{\top}w_+-\bar{Q}_{ii}) & \mbox{ otherwise.}
+		\end{array}\right.
+	\end{equation*}
+\end{lemma}
+\begin{proof}
+ 	The same procedure as every year, James.
+\end{proof}
+
+
+Not yet formulated:
+ \begin{lemma}[Handling Jacobian Updates - Keeping $\bar{N}$ Pos.Def.  ]\\
+	Let $(r,\rho,\delta)$ be a rank-one update applied on the Jacobian approximation $A$, i.e., the new factorized Jacobian approximation $A_+=L_+Y_+^{\top}$ 
+	is given by $A+r\rho^{\top}=LY^{\top}+r\rho^{\top}/\delta$.\\
+	Then $\dots$
+\end{lemma}
+\begin{proof}
+	Assume that $r\rho^{\top}/\delta$ is an update applied on the current Jacobian approximation $A$ in a QR-factorized form, i.e., 
+	$A_+=LY^{\top}+r\rho^{\top}/\delta$. According to \cite{tb:MACIEJ}, the update can be rewritten as
+	\begin{equation*}
+	A_+=L_+\underset{Y_+}{\underbrace{G_2 G_1(Y^{\top}+\tilde{r} \varDelta y^{\top})}}
+	\end{equation*}
+	with suitable vectors $\tilde{r}$, $ \varDelta y$, and two sequences of Givens rotation.
+	The correction $Y_+$ of the rangespace matrix $Y$ leads to the need of adapting the matrix
+	$\bar{N}$ as it depends on $Y$ :
+\begin{align*}
+	\bar{N}= Q - \gamma^{-1} W^\top W +\gamma^{-1}(W -\gamma S )^{\top}YY^{\top}(W - \gamma S )
+\end{align*}
+	This can be done in terms of two rank-one updates
+	since $YY^\top$ can be updated to $Y_+Y_+^\top$ in the following way:
+	\begin{eqnarray*}
+		Y_+Y_+^\top&=&(Y+\varDelta y\tilde{r}^{\top})G_1^\top G^\top_2 G_2 G_1(Y^{\top}+\tilde{r} \varDelta y^{\top})\\
+		&=&(Y+\varDelta y\tilde{r}^{\top})(Y^{\top}+\tilde{r} \varDelta y^{\top}) \\
+		&=&YY^{\top} + Y\tilde{r}\varDelta y^{\top} +\varDelta y\tilde{r}^{\top}Y^{\top} +\varDelta y\varDelta y^{\top} \| \tilde{r}\|^2\\
+		&=&YY^{\top} + \left(\| \tilde{r}\|\varDelta y^{\top} + \frac{Y\tilde{r}}{\| \tilde{r}\|}\right)\left(\| \tilde{r}\|\varDelta y^{\top} + \frac{Y\tilde{r}}{\| \tilde{r}\|}\right)^\top -\frac{Y\tilde{r}\tilde{r}^\top Y^\top}{\| \tilde{r}\|^2}
+	\end{eqnarray*}
+	Insertion into the formula for $\bar{N}$ results in
+	\begin{eqnarray*}
+		\bar{N}_+ &=& \bar{Q}- \gamma^{-1} W^\top W+\gamma^{-1} (W -\gamma S )^{\top}Y_+Y_+^{\top}(W -\gamma S )\\
+			&=&\bar{Q}- \gamma^{-1} W^\top W+ \gamma^{-1}(W -\gamma S )^{\top}YY^{\top}(W -\gamma S )\\ &&+\gamma^{-1}(W -\gamma S )^{\top}(a+b)(a+b)^{\top}(W-\gamma S )\\
+			&& - \gamma^{-1}(W -\gamma S )^{\top}bb^{\top}(W -\gamma S ) \\
+			&=&\bar{N}+\gamma^{-1}(W -\gamma S )^{\top}(a+b)(a+b)^{\top}(W -\gamma S )\\
+			&& - \gamma^{-1}(W -\gamma S )^{\top}bb^{\top}(W -\gamma S )\\
+	\end{eqnarray*}
+	where $a$ and $b$ abbreviate $\| \tilde{r}\|\varDelta y^{\top}$ and $b:=\frac{Y\tilde{r}}{\| \tilde{r}\|}$, respectively.
+	Obviously, only the downdate can cause the matrix $\bar{N}_+$ losing positive definiteness.
+	A possibility to avoid this drawback  is given by an adjustment of the parameter $\gamma$ ,i.e., 
+	due to the assumed positive definiteness of $\bar{N}$ one can find a certain treshhold $\Gamma_1$ such that $\bar{N}_+$  inherits the
+	positive definiteness from  $\bar{N}$ if $\gamma>\Gamma_1$.
+	
+	
+\end{proof}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+ \clearpage
+\subsection{ZED is DEAD}
+\index{ ZED is DEAD }
+\noindent When using a partial limited memory approach in conjunction with a total quasi-Newton method with nullspace factorization a significant amount of memory is expended on the matrix $Z$ containing the nullspace basis of the Jacobian. This fact limits the benefits from the limited memory approach, especially if only a small number of constraints is active. In \cite{tb:VOLKER} a range-space implementation is suggested to avoid the storage of $Z$. In the following we give the basic idea how the newly established partial limited memory nullspace approach can be improved by utilizing the orthonormality relation $ZZ^{\top}+YY^{\top}=I$ for the range- and nullspace representation $[Y,Z]$. \\
+\noindent In this case the storage of the $(n-m)\times n$ matrix $Z$ can be avoided without any loss in theory.
+According to \cite{tb:TORSTEN},  $Z$ is needed neither to get a total quasi-Newton step nor for the update of the factorized KKT system itself. Therefore, by eliminating $Z$ a further reduction of the computational effort of a practical algorithm is possible. Also a remarkably low, upper bound on memory and the operation count per loop step is obtained.
+
+\begin{theorem}[Solving KKT without Z]	
+	The step direction / solution
+	\begin{eqnarray*}
+		s&=& -YL^{-1}c_{\mathcal{A}}(x)-Z(Z^{\top}BZ)^{-1}(Z^{\top}\nabla_x \mathcal{L}(x,\lambda) -Z^{\top}BYL^{-1}c_{\mathcal{A}}(x))\\
+		\sigma&=&-L^{-\top}(Y^{\top}\nabla_x \mathcal{L}(x,\lambda)+Y^{\top}BYY^{\top}s+Y^{\top}BZZ^{\top}s)
+	\end{eqnarray*}
+	for the approximated nullspace factorized KKT system given by
+	\begin{equation*}
+		\left( \begin{array}{c c c} Y^{\top}BY & Y^{\top}BZ &L^{\top}\\
+			Z^{\top}BY & Z^{\top}BZ &0\\
+		L&0&0 \end{array}\right)
+		\left( \begin{array}{c} Y^{\top}s \\ Z^{\top}s \\ \sigma \end{array}\right)
+		= - \left( \begin{array}{c} Y^{\top}\nabla_x \mathcal{L}(x,\lambda) \\ Z^{\top}\nabla_x \mathcal{L}(x,\lambda) \\c_{\mathcal{A}}(x) \end{array}\right)
+	\end{equation*}
+	can be computed \textbf{without using Z}, if the Hessian approximation $B$ is given as a low-rank perturbation of the identity matrix or a multiple thereof.
+\end{theorem}
+
+\begin{proof}
+	Consider the computation of the step vector $s$ which can be written as
+	\begin{eqnarray*}
+		s&=& -YL^{-1}c_{\mathcal{A}}(x)-Z(Z^{\top}BZ)^{-1}Z^{\top}\left[\nabla_x \mathcal{L}(x,\lambda) -BYL^{-1}c_{\mathcal{A}}(x)\right]
+	\end{eqnarray*}
+	Here only the factor $Z(Z^{\top}BZ)^{-1}Z^{\top}$ is interesting, as it depends on $Z$. Due to the previous chapter about limited memory,
+	$(Z^{\top}BZ)^{-1}$ is given by
+	\begin{eqnarray*}
+		(Z^{\top}BZ)^{-1}&=&\gamma^{-1} I +\gamma^{-2}(Z^{\top}W-\gamma Z^{\top}S) [-\bar{M}\\
+			& &-\gamma^{-1} (W-\gamma S) ZZ^{\top} (W-\gamma S)]^{-1}(Z^{\top}W-\gamma Z^{\top}S)^{\top}
+	\end{eqnarray*}
+	Multiplication from the left and the right side by $Z$ resp. $Z^{\top}$ yields
+	\begin{eqnarray*}
+		Z(Z^{\top}BZ)^{-1}Z^{\top} &=&\gamma^{-1} ZZ^{\top} +\gamma^{-2}ZZ^{\top}\left(W-\gamma S\right) [-\bar{M}\\
+			& &\left.-\gamma^{-1} (W-\gamma S)^{\top} ZZ^{\top} (W-\gamma S)\right]^{-1}\left(W-\gamma S\right)^{\top}ZZ^{\top}
+	\end{eqnarray*}
+	Applying the identity $ZZ^{\top}=(I-YY^{\top})$ to the above equation as well as for the computation of the Lagrange multiplier step via
+	\begin{eqnarray*}
+		\sigma&=&-L^{-\top}\left[Y^{\top}\nabla_x \mathcal{L}(x,\lambda)+Y^{\top}BYY^{\top}s+Y^{\top}BZZ^{\top}s\right]\\
+			&=&-L^{-\top}\left[Y^{\top}\nabla_x \mathcal{L}(x,\lambda)+Y^{\top}BYY^{\top}s+Y^{\top}B(I-YY^{\top})s\right]\\
+			&=&-L^{-\top}Y^{\top}\left[\nabla_x \mathcal{L}(x,\lambda)+Bs\right]
+	\end{eqnarray*}
+	concludes the proof.
+\end{proof}
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+               
+\subsection{Improving Computational Effort Efficiently}
+\noindent From a computational point of view the most time-consuming part per iteration is the step computation. Here, several matrix-matrix-products of order no less than $\mathcal{O}(n\cdot m \cdot l)$ would be necessary since the reformulation 
+\begin{eqnarray*}
+	Z(Z^{\top}BZ)^{-1}Z^{\top}	&=&(\gamma^{-1}I +\gamma^{-2}ZZ^{\top}(W-\gamma S) \bar{N}^{-1}(W-\gamma S)^{\top})ZZ^{\top}
+\end{eqnarray*}
+
+\noindent involves a computation and factorization of the middle matrix $N$ given by
+\begin{eqnarray*}
+	\bar{N}&=&-\bar{M}-\gamma^{-1} (W-\gamma S) (I-YY^{\top}) (W-\gamma S) \in \mathbb{R}^{l \times l}
+\end{eqnarray*}
+
+\noindent As proved in \cite{tb:TORSTEN}, the basic idea to overcome this drawback is to avoid recomputation of $\bar{N}$ from scratch, but apply updates performed on the Hessian and Jacobian directly to the matrix $\bar{N}$.\\
+Because matrix-matrix addition and matrix-vectors products are 'cheap', and since for $l \ll n$ sufficiently small $\bar{N}$ can be factorized from scratch without exceeding $\mathcal{O}(n\cdot l)$ operations, one can show by multiplication from right to left that 
+\begin{equation*}
+	OPS(Z(Z^{\top}BZ)^{-1}Z^{\top}\cdot v)=\mathcal{O}(n \cdot \max(m,l)) 
+\end{equation*}
+
+\noindent holds and therefore, the whole step-computation has bilinear complexity.\\ 
+\noindent The proof is split up into three parts, which examine all possible changes having an influence on the matrix $\bar{N}$ and show that the effort is bounded by $\mathcal{O}(n\cdot max(m,l))$ operations.
+Since the proofs of the following propositions are quite similar, only one will be given.
+
+\begin{proposition}[Updating $\bar{N}$ - Hessian updates]
+	The midmatrix $\bar{N}$ can be directly updated with $\mathcal{O}(n\cdot max(m,l))$ operations, if the Hessian is subject to a rank-one modification.
+\end{proposition}
+
+\begin{proof}
+	Three different actions can be performed if the Hessian is updated in the limited memory case:
+	\begin{enumerate}
+		\item A new secant pair $(s_i,w_i)$ is added to $(S,W)$
+		\item an old pair $(s_i,w_i)$ is removed from $(S,W)$
+		\item or an old update $(s_i,w_i)$ is exchanged by a new one $(s_{new},w_{new})$.
+	\end{enumerate}
+	All these cases modify the matrix $\bar{N}$, since it depends on $(S,W)$.\\
+	%\begin{eqnarray*}
+%		\bar{N}&=&-P +W^{\top}S +S^{\top}W -\gamma^{-1}W^{\top}W \\
+%		&&- W^{\top}YY^{\top}S - S^{\top}YY^{\top}W +\gamma^{-1}W^{\top}YY^{\top}W+\gamma S^{\top}YY^{\top}S
+%	\end{eqnarray*}
+	The basic idea of the proof is to represent these changes as a constant number of low-rank updates. Therefore not only the matrices
+	$S$ and $W$ will be saved and updated, but also $S^{\top}Y$ and $W^{\top}Y$ and all summands of $\bar{N}$ up to transpositions.	All the three cases will be illustrated on $S^{\top}W$
+	\begin{enumerate}
+		\item Adding a new update  pair $(s_{new},w_{new})$ to the set $(S,W)$ by setting $(S,W)_+= 
+				((s_1,\dots,s_{i-1},s_i=s_{new}),(w_1,\dots,w_{i-1},w_i=s_{new}))$ 	
+			results in an extended matrix plus three rank-1 updates :
+			\begin{eqnarray*}
+				(S^{\top}W)_+&=&\left[\begin{array}{cc}  
+					S^{\top}W & S^{\top}w_i\\
+					s_i^{\top}W & s_i^{\top}w_i
+				\end{array}\right] \\
+				&=&\left[\begin{array}{cc}
+					W^{\top}S & 0\\
+					0 & 0 
+				\end{array}\right]
+				+(S^{\top}w_i)e_i^{\top}+ e_i (s_i^{\top}W)^{\top} + w_i^{\top}s_i (e_i e_i^{\top})
+			\end{eqnarray*}
+		\item Assume the secant pair $(s_i,w_i)$, which shall be deleted is in last position in $(S,W)$ i.e. $(S,W) = ( (s_1,\dots,s_i) , 	
+			(w_1,\dots,w_i) )$, otherwise use the routine described in the next point to overwrite it with the last one. Then by erasing the 
+			last row and column of $S^{\top}W$ the secant pair can be removed.
+		\item Exchanging a secant pair $(s_i,w_i)$ by a new one, can be done by three rank-1 terms on $(S,W)$ with $\tilde{s}:= (s_{new}-s_i)$ and 
+			$\tilde{w}:= (w_{new}-w_i)$:
+			\begin{eqnarray*}
+				(S^{\top}W)_+&=&S^{\top}W+e_i\tilde{s}^{\top}W+ S^{\top}\tilde{w}e_i^{\top}  + \tilde{s}^{\top}\tilde{w} (e_i e_i^{\top})
+			\end{eqnarray*}
+	\end{enumerate}	
+	For the terms including Y two extra calculations are needed, i.e.
+	$s_{new}^{\top}Y$ and $w_{new}^{\top}Y$, which are restricted by $\mathcal{O}(n\cdot m)$.\\
+	In order to keep the computational effort low the expressions $e_i (s_i^{\top}W)^{\top}$ are evaluated by computing $s_i^{\top}W$ first and only storing 
+	these vectors, instead of matrices filled with zeros.\\
+	Applying these results on $\bar{N}$, one gets a sequence of rank-1 updates :\newpage
+	\begin{enumerate}
+		\item Adding $(s_i,w_i)$ to $(S,W)$ gives\footnote[1]{using Matlab-like notation} :
+			\begin{eqnarray*}
+				\bar{N}_+&=&\left[\begin{array}{lc}
+								\bar{N} & 0\\
+								0 & 0
+							\end{array}\right]
+						+\sum_{j=1}^8 \lambda_j ( e_i v_j^{\top} + v_je_i^{\top})
+						+\sum_{j=9}^{16} \lambda_j ( e_i e_i^{\top})
+			\end{eqnarray*}
+		\item Deletion of $(s_i,w_i)$ in $( (s_1,\dots,s_k),(w_1,\dots,w_k) )$ yields \footnotemark[\value{footnote}]:
+			\begin{eqnarray*}
+				\bar{N}_+&=& \left(\bar{N}	+\sum_{j=1}^8 \lambda_j ( e_i v_j^{\top} + v_je_i^{\top})
+						+\sum_{j=9}^{16} \lambda_j ( e_i e_i^{\top})\right)[1:k-1 ; 1:k-1]\mbox{}
+			\end{eqnarray*}
+		\item Exchanging $(s_i,w_i)$ with $(s_{new},w_{new})$ results in:
+			\begin{eqnarray*}
+				\bar{N}_+&=&\bar{N}	+\sum_{j=1}^8 \lambda_j ( e_i v_j^{\top} + v_je_i^{\top})
+						+\sum_{j=9}^{16} \lambda_j ( e_i e_i^{\top})
+			\end{eqnarray*}
+	\end{enumerate}
+	where the vectors $v_j$  and scalars $\lambda_j$ are defined by the performed action.
+\end{proof}
+
+\noindent Hence, by a carefull implementation of the linear algebra for the updating of the KKT system, the following remarkable result is obtained (cf. \cite{tb:TORSTEN}):
+
+\begin{theorem}[ZED is DEAD] 
+For a partial limited memory approach on a total quasi-Newton-Method with nullspace factorization, the needed memory size and computational effort per iteration
+are both of order $\mathcal{O}(nm+nl+l^3)$.
+\end{theorem}
+
+\section{Example}
+The effectiveness of the presented method has been verified on the two examples LUKVLE3 and LUKVLI9 from the CUTEr test set.\\
+\begin{minipage}[b]{0.49\linewidth}
+%   \includegraphics[scale=0.4]{fig/tb:LUKVLE3.eps}
+\end{minipage}
+\begin{minipage}[b]{0.49\linewidth}
+%   \includegraphics[scale=0.4]{fig/tb:LUKVLI9.eps}
+\end{minipage}\\
+Here, the number of constraints is small ($m=2$,  $m=6$) , whereas the number of variables is comparatively large ($n\approx 10 000$).
+For $l=4$ secant pairs in storage the two problems were solved within $111$ and $20$ iterations, respectively.
+Thus, the overall effort $\sim 100\cdot6\cdot 10^4$ arithmetic operations was less than that for ONE nullspace factorization of the KKT system. IPOPT takes $9$ and $33$ steps, respectively, using full first and second derivative information!
+
+\section{Conclusion}
+\noindent 
+This article summarizes our recent research on total quasi-Newton methods for
+nonlinear programming. A practical implementation of the limited memory SR1 method is
+presented. It avoids the explicit storage of the Hessian and reduces the
+computational effort for quasi-Newton updates to about $4 \; l\cdot n$ operations. A
+nullspace factorization of the KKT system in the constrained case is reformulated by
+means of compact representation formulae and efficiently solved using an updated $QR$
+decomposition of the Jacobian.
+
+\noindent The ``ZED Is DEAD'' approach circumvents the necessity of storing the matrix
+$Z$ for the solution of the system while reducing the computational effort to the
+bilinear complexity $\mathcal{O}(n\cdot \max (l,m))$. This should be particularly beneficial on dense large-scale problems
+with a small set of active constraints $m \ll n$ .
+
+\noindent First practical runs on the CUTEr test set indicate acceptable linear
+convergence rates even for small $l < 10$ with drastic reduction in computing time per iteration. A further
+reduction to order $\mathcal{O} (m^2/2 +n\cdot l)$ in the storage and operation count is envisioned by a \textit{semi-normal} approach.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{thebibliography}{99.}
+	\bibitem{tb:TORSTEN} Bosse T (2009) A derivative-matrix-free NLP solver without explicit nullspace representation. Diplom-Thesis, Humboldt Universit\"at zu Berlin, Berlin
+
+	\bibitem{tb:NOCEDAL} Byrd, Richard H, et al. (1994) Representations of quasi-{N}ewton matrices and their use in
+				limited memory methods, Math. Programming 63:129--156
+	\bibitem{tb:GILL} Gill P, Murray W, Saunders M (2005) SNOPT: An SQP algorithm for large-scale constrained optimization.
+				SIAM Review 47(1):99--131
+
+	\bibitem{tb:AD} Griewank A, Walther A (2008) Evaluating derivatives.
+				Society for Industrial and Applied Mathematics (SIAM), Philadelphia, PA
+
+	\bibitem{tb:ANDREAS} Griewank A, Walther A, Korzec M (2007) Maintaining factorized {KKT} systems subject to rank-one
+				updates of {H}essians and {J}acobians, Optimization Methods \& Software 22:279--295
+
+	\bibitem{tb:MACIEJ} Korzec M (2008) A General Low Rank Update Based Quadratic Programming Solver. Diplom-Thesis, Humboldt Universit\"at zu Berlin, Berlin
+
+    \bibitem{tb:NW} Nocedal J,  Wright S (2006) Numerical Optimization, Springer Series in Operations Research,  2nd Edt.
+	
+	\bibitem{tb:VOLKER} Schlosshauer V (2008) Strukturausnutzung und Speicherplatzbegrenzung f\"ur hochdimensionale, nichtlineare Optimierung. Diplom-Thesis,Humboldt Universit\"at zu Berlin, Berlin
+
+\end{thebibliography}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% \printindex
+\end{document}
+
+
+
